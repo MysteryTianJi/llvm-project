@@ -1467,6 +1467,9 @@ void PassBuilder::addVectorPasses(OptimizationLevel Level,
 ModulePassManager
 PassBuilder::buildModuleOptimizationPipeline(OptimizationLevel Level,
                                              ThinOrFullLTOPhase LTOPhase) {
+  llvm::errs() << "[LiDongsheng Thesis] Constructing Optimization Pipeline at Level " 
+               << Level.getSpeedupLevel() << "...\n";
+  
   const bool LTOPreLink = isLTOPreLink(LTOPhase);
   ModulePassManager MPM;
 
