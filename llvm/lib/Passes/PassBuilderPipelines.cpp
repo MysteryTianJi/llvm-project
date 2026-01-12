@@ -151,6 +151,15 @@
 #include "llvm/Transforms/Vectorize/SLPVectorizer.h"
 #include "llvm/Transforms/Vectorize/VectorCombine.h"
 
+#include <cstdlib> // 为了使用 std::getenv
+#include <cstring> // 为了使用 strcmp
+#include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
+// 判断当前环境变量要求插在什么位置
+static bool isThesisLocation(const char* targetLoc) {
+    const char* env = std::getenv("THESIS_ASAN_LOC");
+    if (!env) return false;
+    return std::strcmp(env, targetLoc) == 0;
+}
 using namespace llvm;
 
 namespace llvm {
@@ -1467,11 +1476,17 @@ void PassBuilder::addVectorPasses(OptimizationLevel Level,
 ModulePassManager
 PassBuilder::buildModuleOptimizationPipeline(OptimizationLevel Level,
                                              ThinOrFullLTOPhase LTOPhase) {
+  ModulePassManager MPM;
+
   llvm::errs() << "[LiDongsheng Thesis] Constructing Optimization Pipeline at Level " 
                << Level.getSpeedupLevel() << "...\n";
+  if (isThesisLocation("PRE")) {
+    llvm::errs() << "[Thesis] !!! Inserting ASan at PRE-OPT Stage !!!\n";
+    // 这里插入 ASan Pass
+    MPM.addPass(AddressSanitizerPass(AddressSanitizerOptions())); 
+  }
   
   const bool LTOPreLink = isLTOPreLink(LTOPhase);
-  ModulePassManager MPM;
 
   // Run partial inlining pass to partially inline functions that have
   // large bodies.
@@ -1634,14 +1649,26 @@ PassBuilder::buildModuleOptimizationPipeline(OptimizationLevel Level,
   // Add the core optimizing pipeline.
   MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizePM),
                                                 PTO.EagerlyInvalidateAnalyses));
-
+  
+  if (Level.getSpeedupLevel() > 0) {
+   llvm::errs() << "[LiDongsheng Thesis] Mid-Opt Stage: Simplification done, Loop Opt coming next.\n";
+  }
+  if (isThesisLocation("MID")) {
+    llvm::errs() << "[Thesis] !!! Inserting ASan at MID-OPT Stage !!!\n";
+    MPM.addPass(AddressSanitizerPass(AddressSanitizerOptions()));
+  }
+  
   // AllocToken transforms heap allocation calls; this needs to run late after
   // other allocation call transformations (such as those in InstCombine).
   if (!LTOPreLink)
     MPM.addPass(AllocTokenPass());
 
-  invokeOptimizerLastEPCallbacks(MPM, Level, LTOPhase);
-
+  if (!std::getenv("THESIS_ASAN_LOC")) {
+      invokeOptimizerLastEPCallbacks(MPM, Level, LTOPhase);
+  } else {
+      llvm::errs() << "[Thesis] Default OptimizerLastEP callback blocked to prevent conflict.\n";
+  }
+  
   // Split out cold code. Splitting is done late to avoid hiding context from
   // other optimizations and inadvertently regressing performance. The tradeoff
   // is that this has a higher code size cost than splitting early.
@@ -1701,6 +1728,11 @@ PassBuilder::buildModuleOptimizationPipeline(OptimizationLevel Level,
           /* MandatoryFirst */ true,
           InlineContext{ThinOrFullLTOPhase::None, InlinePass::CGSCCInliner}));
     }
+  }
+  llvm::errs() << "[LiDongsheng Thesis] Post-Opt Stage: All optimizations finished.\n";
+  if (isThesisLocation("POST")) {
+    llvm::errs() << "[Thesis] !!! Inserting ASan at POST-OPT Stage !!!\n";
+    MPM.addPass(AddressSanitizerPass(AddressSanitizerOptions()));
   }
   return MPM;
 }
